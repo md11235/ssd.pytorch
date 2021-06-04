@@ -7,6 +7,7 @@ import torch.utils.data as data
 import torchvision.transforms as transforms
 import cv2
 import numpy as np
+from functools import reduce
 
 COCO_ROOT = osp.join(HOME, 'data/coco/')
 IMAGES = 'images'
@@ -55,13 +56,14 @@ class COCOAnnotationTransform(object):
         Returns:
             a list containing lists of bounding boxes  [bbox coords, class idx]
         """
-        scale = np.array([width, height, width, height])
+        scale = np.array([width, height, width, height, width, height, width, height])
         res = []
         for obj in target:
             if 'bbox' in obj:
                 bbox = obj['bbox']
-                bbox[2] += bbox[0]
-                bbox[3] += bbox[1]
+                bbox = reduce(lambda x, y: x+y, bbox)
+                # bbox[2] += bbox[0]
+                # bbox[3] += bbox[1]
                 label_idx = self.label_map[obj['category_id']] - 1
                 final_box = list(np.array(bbox)/scale)
                 final_box.append(label_idx)

@@ -162,7 +162,11 @@ def train():
             adjust_learning_rate(optimizer, args.gamma, step_index)
 
         # load train data
-        images, targets = next(batch_iterator)
+        try:
+            images, targets = next(batch_iterator)
+        except StopIteration:
+            batch_iterator = iter(data_loader)
+            images, targets = next(batch_iterator)
 
         if args.cuda:
             images = Variable(images.cuda())
@@ -181,7 +185,6 @@ def train():
         loss.backward()
         optimizer.step()
         t1 = time.time()
-        print("madsen: size: {}".format(loss_l.item()))
         loc_loss += loss_l.item()
         conf_loss += loss_c.item()
 
@@ -193,7 +196,7 @@ def train():
             update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
                             iter_plot, epoch_plot, 'append')
 
-        if iteration != 0 and iteration % 5000 == 0:
+        if iteration != 0 and iteration % 200 == 0:
             print('Saving state, iter:', iteration)
             torch.save(ssd_net.state_dict(), 'weights/ssd300_COCO_' +
                        repr(iteration) + '.pth')
