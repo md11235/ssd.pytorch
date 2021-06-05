@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import torch
+from shapely.geometry import Polygon
+import itertools
 
 
 def point_form(boxes):
@@ -12,6 +14,26 @@ def point_form(boxes):
     """
     return torch.cat((boxes[:, :2] - boxes[:, 2:]/2,     # xmin, ymin
                      boxes[:, :2] + boxes[:, 2:]/2), 1)  # xmax, ymax
+
+
+def eight_coords_form(boxes):
+    """ Convert prior_boxes to (xmin, ymin, xmax, ymin, xmax, ymax, xmin, ymax)
+    representation for comparison to 8-coords form ground truth data.
+    Args:
+        boxes: (tensor) center-size default boxes from priorbox layers.
+    Return:
+        boxes: (tensor) Converted (xmin, ymin, xmax, ymin, xmax, ymax, xmin, ymax) form of boxes.
+    """
+    tmp = torch.cat((boxes[:, :2] - boxes[:, 2:]/2, 
+                    boxes[:, :2] + boxes[:, 2:]/2), 1)
+    xmin = tmp[:, 0]
+    ymin = tmp[:, 1]
+    xmax = tmp[:, 2]
+    ymax = tmp[:, 3]
+
+    return torch.cat((xmin.unsqueeze(1), ymin.unsqueeze(1), xmax.unsqueeze(1), ymin.unsqueeze(1),
+                      xmax.unsqueeze(1), ymax.unsqueeze(1), xmin.unsqueeze(1), ymax.unsqueeze(1)),
+                     dim=1)
 
 
 def center_size(boxes):
@@ -47,6 +69,31 @@ def intersect(box_a, box_b):
     return inter[:, :, 0] * inter[:, :, 1]
 
 
+def jaccard_quadrilateral(box_a, box_b):
+    """Compute the jaccard overlap of two sets of quadrilaterals. The
+    jaccard overlap is simply the intersection over union of two
+    boxes. Here we operate on ground truth boxes and default boxes.
+    
+    Args:
+        box_a: (tensor) Ground truth bounding boxes, Shape: [num_objects, 8]
+        box_b: (tensor) Prior boxes from priorbox layers, Shape: [num_priors, 8]
+    Return:
+        IoU(jaccard) overlap: (tensor) Shape: [box_a.size(0), box_b.size(0)]
+
+    """
+    quadri_a = [Polygon(ql.reshape((-1,2))) for ql in box_a]
+    quadri_b = [Polygon(ql.reshape((-1,2))) for ql in box_b]
+
+    box_product = itertools.product(quadri_a, quadri_b)
+    intersections_list = [a.intersection(b).area for (a, b) in box_product]
+    intersections_tensor = torch.tensor(intersections_list, dtype=torch.float).reshape(box_a.size(0), box_b.size(0))
+    area_a = torch.tensor([qa.area for qa in quadri_a], dtype=torch.float).unsqueeze(1).expand_as(intersections_tensor)
+    area_b = torch.tensor([qb.area for qb in quadri_b], dtype=torch.float).unsqueeze(0).expand_as(intersections_tensor)
+
+    union = area_a + area_b - intersections_tensor
+    return intersections_tensor / union
+
+    
 def jaccard(box_a, box_b):
     """Compute the jaccard overlap of two sets of boxes.  The jaccard overlap
     is simply the intersection over union of two boxes.  Here we operate on
@@ -66,6 +113,51 @@ def jaccard(box_a, box_b):
               (box_b[:, 3]-box_b[:, 1])).unsqueeze(0).expand_as(inter)  # [A,B]
     union = area_a + area_b - inter
     return inter / union  # [A,B]
+
+
+def match_quadrilaterals(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
+    """Match each prior box with the ground truth box of the highest jaccard
+    overlap, encode the bounding boxes, then return the matched indices
+    corresponding to both confidence and location preds.
+    Args:
+        threshold: (float) The overlap threshold used when mathing boxes.
+        truths: (tensor) Ground truth boxes, Shape: [num_obj, num_priors].
+        priors: (tensor) Prior boxes from priorbox layers, Shape: [n_priors,4].
+        variances: (tensor) Variances corresponding to each prior coord,
+            Shape: [num_priors, 4].
+        labels: (tensor) All the class labels for the image, Shape: [num_obj].
+        loc_t: (tensor) Tensor to be filled w/ endcoded location targets.
+        conf_t: (tensor) Tensor to be filled w/ matched indices for conf preds.
+        idx: (int) current batch index
+    Return:
+        The matched indices corresponding to 1)location and 2)confidence preds.
+    """
+    # jaccard index
+    overlaps = jaccard_quadrilateral(
+        truths,
+        eight_coords_form(priors)
+    )
+    # (Bipartite Matching)
+    # [1,num_objects] best prior for each ground truth
+    best_prior_overlap, best_prior_idx = overlaps.max(1, keepdim=True)
+    # [1,num_priors] best ground truth for each prior
+    best_truth_overlap, best_truth_idx = overlaps.max(0, keepdim=True)
+    best_truth_idx.squeeze_(0)
+    best_truth_overlap.squeeze_(0)
+    best_prior_idx.squeeze_(1)
+    best_prior_overlap.squeeze_(1)
+    best_truth_overlap.index_fill_(0, best_prior_idx, 2)  # ensure best prior
+    # TODO refactor: index  best_prior_idx with long tensor
+    # ensure every gt matches with its prior of max overlap
+    for j in range(best_prior_idx.size(0)):
+        best_truth_idx[best_prior_idx[j]] = j
+    matches = truths[best_truth_idx]          # Shape: [num_priors,4]
+    conf = labels[best_truth_idx] + 1         # Shape: [num_priors]
+    conf[best_truth_overlap < threshold] = 0  # label as background
+    loc = encode_quadrilaterals(matches, priors, variances)
+    loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn
+    conf_t[idx] = conf  # [num_priors] top class label for each prior
+
 
 
 def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
@@ -111,6 +203,25 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn
     conf_t[idx] = conf  # [num_priors] top class label for each prior
 
+
+def encode_quadrilaterals(matched, priors, variances):
+    """
+
+    Args:
+        matched: (tensor) Coords of ground truth for each prior in concatenated 4 * (x, y) coords
+            Shape: [num_priors, 8].
+        priors: (tensor) Prior boxes in center-offset form
+            Shape: [num_priors,4].
+        variances: (list[float]) Variances of priorboxes
+    Return:
+        encoded boxes (tensor), Shape: [num_priors, 4]
+
+    """
+    priors_8coords = eight_coords_form(priors)
+    diff = matched - priors_8coords
+    diff /= torch.cat((priors[:, 2:], priors[:, 2:], priors[:, 2:], priors[:, 2:]), dim=1)
+
+    return diff
 
 def encode(matched, priors, variances):
     """Encode the variances from the priorbox layers into the ground truth boxes
