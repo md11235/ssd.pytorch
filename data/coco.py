@@ -40,6 +40,41 @@ def get_label_map(label_file):
     return label_map
 
 
+class COCOQuadrilateralAnnotationTransform(object):
+    """Transforms a COCO annotation into a Tensor of bbox coords and label index
+    Initilized with a dictionary lookup of classnames to indexes
+    """
+    def __init__(self):
+        self.label_map = get_label_map(osp.join(COCO_ROOT, 'coco_labels_panel.txt'))
+
+    def __call__(self, target, width, height):
+        """
+        Args:
+            target (dict): custom COCO target json annotation as a python dict where object boundary is described using a quadrilateral
+            height (int): height
+            width (int): width
+        Returns:
+            a list containing lists of bounding boxes  [bbox coords, class idx]
+        """
+        scale = np.array([width, height, width, height,width, height, width, height])
+        res = []
+        for obj in target:
+            if 'bbox' in obj:
+                bbox = obj['bbox']
+                bbox = reduce(lambda x, y: x+y, bbox)
+                if np.array(bbox).shape[0] == 10:
+                    print(target)
+                # print("bbox: {}".format(bbox))
+                label_idx = self.label_map[obj['category_id']] - 1
+                final_box = list(np.array(bbox)/scale)
+                final_box.append(label_idx)
+                res += [final_box]  # [xmin, ymin, xmax, ymax, label_idx]
+            else:
+                print("no bbox problem!")
+
+        return res  # [[xmin, ymin, xmax, ymax, label_idx], ... ]
+
+
 class COCOAnnotationTransform(object):
     """Transforms a COCO annotation into a Tensor of bbox coords and label index
     Initilized with a dictionary lookup of classnames to indexes
@@ -56,14 +91,14 @@ class COCOAnnotationTransform(object):
         Returns:
             a list containing lists of bounding boxes  [bbox coords, class idx]
         """
-        scale = np.array([width, height, width, height, width, height, width, height])
+        scale = np.array([width, height, width, height])
         res = []
         for obj in target:
             if 'bbox' in obj:
                 bbox = obj['bbox']
-                bbox = reduce(lambda x, y: x+y, bbox)
-                # bbox[2] += bbox[0]
-                # bbox[3] += bbox[1]
+                # bbox = reduce(lambda x, y: x+y, bbox)
+                bbox[2] += bbox[0]
+                bbox[3] += bbox[1]
                 label_idx = self.label_map[obj['category_id']] - 1
                 final_box = list(np.array(bbox)/scale)
                 final_box.append(label_idx)
@@ -86,7 +121,7 @@ class COCODetection(data.Dataset):
     """
 
     def __init__(self, root, image_set='trainval35k', transform=None,
-                 target_transform=COCOAnnotationTransform(), dataset_name='MS COCO'):
+                 target_transform=COCOQuadrilateralAnnotationTransform(), dataset_name='MS COCO'):
         sys.path.append(osp.join(root, COCO_API))
         from pycocotools.coco import COCO
         self.root = osp.join(root, IMAGES, image_set)
@@ -124,16 +159,19 @@ class COCODetection(data.Dataset):
         ann_ids = self.coco.getAnnIds(imgIds=img_id)
 
         target = self.coco.loadAnns(ann_ids)
+        # print("loadAnns target: {}".format(target))
         path = osp.join(self.root, self.coco.loadImgs(img_id)[0]['file_name'])
         assert osp.exists(path), 'Image path does not exist: {}'.format(path)
         img = cv2.imread(osp.join(self.root, path))
         height, width, _ = img.shape
         if self.target_transform is not None:
+            # print("before target trans {}".format(target))
             target = self.target_transform(target, width, height)
+            # print("after target trans {}".format(target))
         if self.transform is not None:
             target = np.array(target)
-            img, boxes, labels = self.transform(img, target[:, :4],
-                                                target[:, 4])
+            img, boxes, labels = self.transform(img, target[:, :8],
+                                                target[:, 8])
             # to rgb
             img = img[:, :, (2, 1, 0)]
 

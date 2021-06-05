@@ -4,10 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from data import coco as cfg
-from ..box_utils import match, log_sum_exp
+from ..box_utils import match, log_sum_exp, match_quadrilaterals
 
 
-class MultiBoxLoss(nn.Module):
+class MultiBoxQuadrilaterralLoss(nn.Module):
     """SSD Weighted Loss Function
     Compute Targets:
         1) Produce Confidence Target Indices by matching  ground truth boxes
@@ -33,7 +33,7 @@ class MultiBoxLoss(nn.Module):
     def __init__(self, num_classes, overlap_thresh, prior_for_matching,
                  bkg_label, neg_mining, neg_pos, neg_overlap, encode_target,
                  use_gpu=True):
-        super(MultiBoxLoss, self).__init__()
+        super(MultiBoxQuadrilaterralLoss, self).__init__()
         self.use_gpu = use_gpu
         self.num_classes = num_classes
         self.threshold = overlap_thresh
@@ -51,8 +51,8 @@ class MultiBoxLoss(nn.Module):
             predictions (tuple): A tuple containing loc preds, conf preds,
             and prior boxes from SSD net.
                 conf shape: torch.size(batch_size,num_priors,num_classes)
-                loc shape: torch.size(batch_size,num_priors,4)
-                priors shape: torch.size(num_priors,4)
+                loc shape: torch.size(batch_size,num_priors,8)
+                priors shape: torch.size(num_priors,8)
 
             targets (tensor): Ground truth boxes and labels for a batch,
                 shape: [batch_size,num_objs,5] (last idx is the label).
@@ -64,14 +64,17 @@ class MultiBoxLoss(nn.Module):
         num_classes = self.num_classes
 
         # match priors (default boxes) and ground truth boxes
-        loc_t = torch.Tensor(num, num_priors, 4)
+        loc_t = torch.Tensor(num, num_priors, 8)
         conf_t = torch.LongTensor(num, num_priors)
         for idx in range(num):
+            # print("targets: {}, {}".format(idx, targets[idx]))
             truths = targets[idx][:, :-1].data
+            # print("truths shape: {}".format(truths.shape))
+            # print("truths: {}".format(truths))
             labels = targets[idx][:, -1].data
             defaults = priors.data
-            match(self.threshold, truths, defaults, self.variance, labels,
-                  loc_t, conf_t, idx)
+            match_quadrilaterals(self.threshold, truths, defaults, self.variance, labels,
+                                 loc_t, conf_t, idx)
         if self.use_gpu:
             loc_t = loc_t.cuda()
             conf_t = conf_t.cuda()
@@ -83,10 +86,10 @@ class MultiBoxLoss(nn.Module):
         num_pos = pos.sum(dim=1, keepdim=True)
 
         # Localization Loss (Smooth L1)
-        # Shape: [batch,num_priors,4]
+        # Shape: [batch,num_priors,8]
         pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
-        loc_p = loc_data[pos_idx].view(-1, 4)
-        loc_t = loc_t[pos_idx].view(-1, 4)
+        loc_p = loc_data[pos_idx].view(-1, 8)
+        loc_t = loc_t[pos_idx].view(-1, 8)
         loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
 
         # Compute max conf across batch for hard negative mining
@@ -116,5 +119,4 @@ class MultiBoxLoss(nn.Module):
         loss_l /= N
         loss_c /= N
         return loss_l, loss_c
-
-
+    

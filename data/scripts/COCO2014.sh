@@ -56,9 +56,9 @@ echo "Extracting annotations ..."
 unzip ./annotations_trainval2014.zip
 
 echo "Removing zip files ..."
-rm ../images/train2014.zip
-rm ../images/val2014.zip
-rm ./annotations_trainval2014.zip
+# rm ../images/train2014.zip
+# rm ../images/val2014.zip
+# rm ./annotations_trainval2014.zip
 
 echo "Creating trainval35k dataset..."
 

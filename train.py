@@ -1,6 +1,6 @@
 from data import *
 from utils.augmentations import SSDAugmentation
-from layers.modules import MultiBoxLoss
+from layers.modules import MultiBoxLoss, MultiBoxQuadrilaterralLoss
 from ssd import build_ssd
 import os
 import sys
@@ -23,7 +23,7 @@ def str2bool(v):
 parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Training With Pytorch')
 train_set = parser.add_mutually_exclusive_group()
-parser.add_argument('--dataset', default='VOC', choices=['VOC', 'COCO'],
+parser.add_argument('--dataset', default='VOC', choices=['VOC', 'COCO', 'COCO_SSN'],
                     type=str, help='VOC or COCO')
 parser.add_argument('--dataset_root', default=VOC_ROOT,
                     help='Dataset root directory path')
@@ -80,6 +80,18 @@ def train():
         dataset = COCODetection(root=args.dataset_root,
                                 transform=SSDAugmentation(cfg['min_dim'],
                                                           MEANS))
+    elif args.dataset == 'COCO_SSN':
+        if args.dataset_root == VOC_ROOT:
+            if not os.path.exists(COCO_ROOT):
+                parser.error('Must specify dataset_root if specifying dataset')
+            print("WARNING: Using default COCO dataset_root because " +
+                  "--dataset_root was not specified.")
+            args.dataset_root = COCO_ROOT
+        cfg = coco_ssn
+        dataset = COCODetection(root=args.dataset_root,
+                                image_set="ssn406",
+                                transform=SSDAugmentation(cfg['min_dim'], MEANS),
+                                target_transform=COCOQuadrilateralAnnotationTransform())
     elif args.dataset == 'VOC':
         if args.dataset_root == COCO_ROOT:
             parser.error('Must specify dataset if specifying dataset_root')
@@ -119,7 +131,7 @@ def train():
 
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
-    criterion = MultiBoxLoss(cfg['num_classes'], 0.5, True, 0, True, 3, 0.5,
+    criterion = MultiBoxQuadrilaterralLoss(cfg['num_classes'], 0.5, True, 0, True, 3, 0.5,
                              False, args.cuda)
 
     net.train()
@@ -144,7 +156,8 @@ def train():
 
     data_loader = data.DataLoader(dataset, args.batch_size,
                                   num_workers=args.num_workers,
-                                  shuffle=True, collate_fn=detection_collate,
+                                  shuffle=True,
+                                  collate_fn=detection_collate,
                                   pin_memory=True)
     # create batch iterator
     batch_iterator = iter(data_loader)

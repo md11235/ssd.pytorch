@@ -81,6 +81,8 @@ def jaccard_quadrilateral(box_a, box_b):
         IoU(jaccard) overlap: (tensor) Shape: [box_a.size(0), box_b.size(0)]
 
     """
+    # print("a shape: {}".format(box_a.shape))
+    # print("b shape: {}".format(box_b.shape))
     quadri_a = [Polygon(ql.reshape((-1,2))) for ql in box_a]
     quadri_b = [Polygon(ql.reshape((-1,2))) for ql in box_b]
 
@@ -214,7 +216,7 @@ def encode_quadrilaterals(matched, priors, variances):
             Shape: [num_priors,4].
         variances: (list[float]) Variances of priorboxes
     Return:
-        encoded boxes (tensor), Shape: [num_priors, 4]
+        encoded boxes (tensor), Shape: [num_priors, 8]
 
     """
     priors_8coords = eight_coords_form(priors)

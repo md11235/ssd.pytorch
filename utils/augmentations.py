@@ -314,6 +314,7 @@ class Expand(object):
         self.mean = mean
 
     def __call__(self, image, boxes, labels):
+        print("expand. boxes {}".format(boxes))
         if random.randint(2):
             return image, boxes, labels
 
@@ -405,9 +406,9 @@ class SSDAugmentation(object):
             ConvertFromInts(),
             ToAbsoluteCoords(),
             PhotometricDistort(),
-            Expand(self.mean),
-            RandomSampleCrop(),
-            RandomMirror(),
+            # Expand(self.mean),
+            # RandomSampleCrop(),
+            # RandomMirror(),
             ToPercentCoords(),
             Resize(self.size),
             SubtractMeans(self.mean)
