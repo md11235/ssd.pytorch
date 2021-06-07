@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import types
 from numpy import random
+from layers.box_utils import jaccard_quadrilateral, eight_coords_form
 
 
 def intersect(box_a, box_b):
@@ -84,8 +85,13 @@ class ToAbsoluteCoords(object):
         height, width, channels = image.shape
         boxes[:, 0] *= width
         boxes[:, 2] *= width
+        boxes[:, 4] *= width
+        boxes[:, 6] *= width
+
         boxes[:, 1] *= height
         boxes[:, 3] *= height
+        boxes[:, 5] *= height
+        boxes[:, 7] *= height
 
         return image, boxes, labels
 
@@ -95,9 +101,14 @@ class ToPercentCoords(object):
         height, width, channels = image.shape
         boxes[:, 0] /= width
         boxes[:, 2] /= width
+        boxes[:, 4] /= width
+        boxes[:, 6] /= width
+        
         boxes[:, 1] /= height
         boxes[:, 3] /= height
-
+        boxes[:, 5] /= height
+        boxes[:, 7] /= height
+      
         return image, boxes, labels
 
 
@@ -263,7 +274,7 @@ class RandomSampleCrop(object):
                 rect = np.array([int(left), int(top), int(left+w), int(top+h)])
 
                 # calculate IoU (jaccard overlap) b/t the cropped and gt boxes
-                overlap = jaccard_numpy(boxes, rect)
+                overlap = box_util.jaccard_quadrilateral(boxes, eight_coords_form(rect))
 
                 # is min and max overlap constraint satisfied? if not try again
                 if overlap.min() < min_iou and max_iou < overlap.max():
@@ -314,7 +325,7 @@ class Expand(object):
         self.mean = mean
 
     def __call__(self, image, boxes, labels):
-        print("expand. boxes {}".format(boxes))
+        # print("expand. boxes {}".format(boxes))
         if random.randint(2):
             return image, boxes, labels
 
@@ -332,8 +343,10 @@ class Expand(object):
         image = expand_image
 
         boxes = boxes.copy()
-        boxes[:, :2] += (int(left), int(top))
-        boxes[:, 2:] += (int(left), int(top))
+        boxes[:, 0:2] += (int(left), int(top))
+        boxes[:, 2:4] += (int(left), int(top))
+        boxes[:, 4:6] += (int(left), int(top))
+        boxes[:, 6:8] += (int(left), int(top))
 
         return image, boxes, labels
 
@@ -344,7 +357,7 @@ class RandomMirror(object):
         if random.randint(2):
             image = image[:, ::-1]
             boxes = boxes.copy()
-            boxes[:, 0::2] = width - boxes[:, 2::-2]
+            boxes[:, 0::2] = width - boxes[:, 6::-2]
         return image, boxes, classes
 
 
@@ -406,9 +419,9 @@ class SSDAugmentation(object):
             ConvertFromInts(),
             ToAbsoluteCoords(),
             PhotometricDistort(),
-            # Expand(self.mean),
+            Expand(self.mean),
             # RandomSampleCrop(),
-            # RandomMirror(),
+            RandomMirror(),
             ToPercentCoords(),
             Resize(self.size),
             SubtractMeans(self.mean)
@@ -416,3 +429,20 @@ class SSDAugmentation(object):
 
     def __call__(self, img, boxes, labels):
         return self.augment(img, boxes, labels)
+
+
+class SSDTestAugmentation(object):
+    def __init__(self, size=300, mean=(104, 117, 123)):
+        self.mean = mean
+        self.size = size
+        self.augment = Compose([
+            ConvertFromInts(),
+            ToAbsoluteCoords(),
+            ToPercentCoords(),
+            Resize(self.size),
+            SubtractMeans(self.mean)
+        ])
+
+    def __call__(self, img, boxes, labels):
+        return self.augment(img, boxes, labels)
+    
