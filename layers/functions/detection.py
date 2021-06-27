@@ -41,7 +41,7 @@ class Detect(Function):
         for i in range(num):
             print("loc_data[{}]: {}".format(i, loc_data[i]))
             print("loc_data shape: {}".format(loc_data[i].shape))
-            print(prior_data)
+            print("default boxes: {}".format(prior_data))
             decoded_boxes = decode(loc_data[i], prior_data, self.variance)
             print("decoded boxes shape: {}".format(decoded_boxes.shape))
             # For each class, perform nms
@@ -55,6 +55,7 @@ class Detect(Function):
                     continue
                 l_mask = c_mask.unsqueeze(1).expand_as(decoded_boxes)
                 boxes = decoded_boxes[l_mask].view(-1, 8)
+                print("predicted boxes: {}".format(boxes))
                 # idx of highest scoring and non-overlapping boxes per class
                 ids, count = nms(boxes, scores, self.nms_thresh, self.top_k)
                 output[i, cl, :count] = \

@@ -399,7 +399,7 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
             x = x.cuda()
         _t['im_detect'].tic()
         detections = net(x).data
-        print(detections.shape)
+        print("detections shape: {}".format(detections.shape))
         detect_time = _t['im_detect'].toc(average=False)
 
         # skip j = 0, because it's the background class
@@ -409,6 +409,7 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
             print(mask)
             print(mask.shape)
             dets = torch.masked_select(dets, mask).view(-1, 9)
+            print("normalized boxes: {}".format(dets))
             if dets.size(0) == 0:
                 continue
             boxes = dets[:, 1:]
@@ -427,7 +428,7 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
             cls_dets = np.hstack((boxes.cpu().numpy(),
                                   scores[:, np.newaxis])).astype(np.float32,
                                                                  copy=False)
-            print(cls_dets)
+            print("cls_dets: {}".format(cls_dets))
             all_boxes[j][i] = np.asarray(cls_dets[max_score_index])
             print("image {}: class: {} cls_det: {}".format(i, j, cls_dets[max_score_index]))
         
@@ -441,10 +442,8 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
         print(all_boxes_tensor[:, i][sorted_idxs])
         print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
                                                     num_images, detect_time))
-        exit()
-
-        if i > 5:
-            break
+        if i >= 0:
+            exit()
 
     with open(det_file, 'wb') as f:
         pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
