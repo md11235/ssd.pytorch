@@ -9,10 +9,11 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
-from data import VOC_ROOT, VOCAnnotationTransform, VOCDetection, BaseTransform
-from data import VOC_CLASSES as labelmap
+from data import VOC_ROOT, COCO_ROOT, VOCAnnotationTransform, VOCDetection, COCODetection, BaseTransform
+from data import COCO_SSN406_CLASSES as labelmap
+from data.coco import COCOQuadrilateralAnnotationTransform, COCOAnnotationTransform
 import torch.utils.data as data
-
+from utils.augmentations import SSDTestAugmentation
 from ssd import build_ssd
 
 import sys
@@ -48,8 +49,12 @@ parser.add_argument('--cuda', default=True, type=str2bool,
                     help='Use cuda to train model')
 parser.add_argument('--voc_root', default=VOC_ROOT,
                     help='Location of VOC root directory')
+parser.add_argument('--coco_root', default=COCO_ROOT,
+                    help='Location of COCO root directory')
 parser.add_argument('--cleanup', default=True, type=str2bool,
                     help='Cleanup and remove results files following eval')
+parser.add_argument('--image_set', default="val2014", type=str,
+                    help='data set for evaluation')
 
 args = parser.parse_args()
 
@@ -147,17 +152,20 @@ def write_voc_results_file(all_boxes, dataset):
     for cls_ind, cls in enumerate(labelmap):
         print('Writing {:s} VOC results file'.format(cls))
         filename = get_voc_results_file_template(set_type, cls)
+        print("dataset: {}".format(dir(dataset)))
         with open(filename, 'wt') as f:
             for im_ind, index in enumerate(dataset.ids):
+                print("im_ind {}, index {}".format(im_ind, index))
                 dets = all_boxes[cls_ind+1][im_ind]
                 if dets == []:
                     continue
+                # print("dets: {}".format(dets))
                 # the VOCdevkit expects 1-based indices
                 for k in range(dets.shape[0]):
-                    f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
-                            format(index[1], dets[k, -1],
-                                   dets[k, 0] + 1, dets[k, 1] + 1,
-                                   dets[k, 2] + 1, dets[k, 3] + 1))
+                    f.write('{:d} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
+                            format(index, dets[k, -1],
+                                   dets[k, 0] + 1, dets[k, 1] + 1, dets[k, 2] + 1, dets[k, 3] + 1,
+                                   dets[k, 4] + 1, dets[k, 5] + 1, dets[k, 6] + 1, dets[k, 7] + 1))
 
 
 def do_python_eval(output_dir='output', use_07=True):
@@ -170,6 +178,7 @@ def do_python_eval(output_dir='output', use_07=True):
         os.mkdir(output_dir)
     for i, cls in enumerate(labelmap):
         filename = get_voc_results_file_template(set_type, cls)
+        print("filename {}".format(filename))
         rec, prec, ap = voc_eval(
            filename, annopath, imgsetpath.format(set_type), cls, cachedir,
            ovthresh=0.5, use_07_metric=use_07_metric)
@@ -282,6 +291,7 @@ cachedir: Directory for caching the annotations
     # extract gt objects for this class
     class_recs = {}
     npos = 0
+    print("image names: {}".format(imagenames))
     for imagename in imagenames:
         R = [obj for obj in recs[imagename] if obj['name'] == classname]
         bbox = np.array([x['bbox'] for x in R])
@@ -308,6 +318,7 @@ cachedir: Directory for caching the annotations
         sorted_scores = np.sort(-confidence)
         BB = BB[sorted_ind, :]
         image_ids = [image_ids[x] for x in sorted_ind]
+        print("image ids: {}".format(image_ids))
 
         # go down dets and mark TPs and FPs
         nd = len(image_ids)
@@ -367,8 +378,10 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
     # all detections are collected into:
     #    all_boxes[cls][image] = N x 5 array of detections in
     #    (x1, y1, x2, y2, score)
-    all_boxes = [[[] for _ in range(num_images)]
-                 for _ in range(len(labelmap)+1)]
+    # all_boxes = [[[] for _ in range(num_images)]
+    #              for _ in range(len(labelmap)+1)]
+
+    all_boxes = np.zeros((len(labelmap)+1, num_images, 9))
 
     # timers
     _t = {'im_detect': Timer(), 'misc': Timer()}
@@ -376,38 +389,66 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
     det_file = os.path.join(output_dir, 'detections.pkl')
 
     for i in range(num_images):
+        anno = dataset.pull_anno(i)
+        print(anno)
         im, gt, h, w = dataset.pull_item(i)
+        print("gt: {}".format(gt*(w, h, w, h, w,h, w, h, 1)))
 
         x = Variable(im.unsqueeze(0))
         if args.cuda:
             x = x.cuda()
         _t['im_detect'].tic()
         detections = net(x).data
+        print(detections.shape)
         detect_time = _t['im_detect'].toc(average=False)
 
         # skip j = 0, because it's the background class
         for j in range(1, detections.size(1)):
             dets = detections[0, j, :]
-            mask = dets[:, 0].gt(0.).expand(5, dets.size(0)).t()
-            dets = torch.masked_select(dets, mask).view(-1, 5)
+            mask = dets[:, 0].gt(0.).expand(9, dets.size(0)).t()
+            print(mask)
+            print(mask.shape)
+            dets = torch.masked_select(dets, mask).view(-1, 9)
             if dets.size(0) == 0:
                 continue
             boxes = dets[:, 1:]
             boxes[:, 0] *= w
             boxes[:, 2] *= w
+            boxes[:, 4] *= w
+            boxes[:, 6] *= w
             boxes[:, 1] *= h
             boxes[:, 3] *= h
+            boxes[:, 5] *= h
+            boxes[:, 7] *= h
             scores = dets[:, 0].cpu().numpy()
+            max_score_index = np.argmax(scores)
+            # print("boxes: {}".format(boxes))
+            print("boxes shape: {}".format(boxes.shape))
             cls_dets = np.hstack((boxes.cpu().numpy(),
                                   scores[:, np.newaxis])).astype(np.float32,
                                                                  copy=False)
-            all_boxes[j][i] = cls_dets
-
+            print(cls_dets)
+            all_boxes[j][i] = np.asarray(cls_dets[max_score_index])
+            print("image {}: class: {} cls_det: {}".format(i, j, cls_dets[max_score_index]))
+        
+        print("all_boxes")
+        print(all_boxes)
+        all_boxes_tensor = torch.tensor(all_boxes)
+        print(all_boxes_tensor.shape)
+        sorted_idxs = np.argsort(-all_boxes_tensor[:, i, 8])
+        print("for image {}".format(i))
+        print(sorted_idxs[:2])
+        print(all_boxes_tensor[:, i][sorted_idxs])
         print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
                                                     num_images, detect_time))
+        exit()
+
+        if i > 5:
+            break
 
     with open(det_file, 'wb') as f:
         pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
+    print(all_boxes)
 
     print('Evaluating detections')
     evaluate_detections(all_boxes, output_dir, dataset)
@@ -421,14 +462,20 @@ def evaluate_detections(box_list, output_dir, dataset):
 if __name__ == '__main__':
     # load net
     num_classes = len(labelmap) + 1                      # +1 for background
+    print("num classes {}".format(num_classes))
     net = build_ssd('test', 300, num_classes)            # initialize SSD
     net.load_state_dict(torch.load(args.trained_model))
     net.eval()
     print('Finished loading model!')
     # load data
-    dataset = VOCDetection(args.voc_root, [('2007', set_type)],
-                           BaseTransform(300, dataset_mean),
-                           VOCAnnotationTransform())
+    # dataset = VOCDetection(args.voc_root, [('2007', set_type)],
+    #                        BaseTransform(300, dataset_mean),
+    #                        VOCAnnotationTransform())
+    dataset = COCODetection(root=args.coco_root,
+                            image_set=args.image_set,
+                            transform=SSDTestAugmentation(300, (104, 117, 123)),
+                            target_transform=COCOQuadrilateralAnnotationTransform())
+    
     if args.cuda:
         net = net.cuda()
         cudnn.benchmark = True

@@ -123,7 +123,7 @@ def match_quadrilaterals(threshold, truths, priors, variances, labels, loc_t, co
     corresponding to both confidence and location preds.
     Args:
         threshold: (float) The overlap threshold used when mathing boxes.
-        truths: (tensor) Ground truth boxes, Shape: [num_obj, num_priors].
+        truths: (tensor) Ground truth boxes, Shape: [num_obj, num_priors, 8].
         priors: (tensor) Prior boxes from priorbox layers, Shape: [n_priors,4].
         variances: (tensor) Variances corresponding to each prior coord,
             Shape: [num_priors, 4].
@@ -140,6 +140,7 @@ def match_quadrilaterals(threshold, truths, priors, variances, labels, loc_t, co
         eight_coords_form(priors)
     )
     # (Bipartite Matching)
+    # downwards: gt; horizontal: priors
     # [1,num_objects] best prior for each ground truth
     best_prior_overlap, best_prior_idx = overlaps.max(1, keepdim=True)
     # [1,num_priors] best ground truth for each prior
@@ -219,6 +220,7 @@ def encode_quadrilaterals(matched, priors, variances):
         encoded boxes (tensor), Shape: [num_priors, 8]
 
     """
+    # todo: 查看matched 和 priors的值是多少（绝对坐标值还是相对w、h的值）
     priors_8coords = eight_coords_form(priors)
     diff = matched - priors_8coords
     diff /= torch.cat((priors[:, 2:], priors[:, 2:], priors[:, 2:], priors[:, 2:]), dim=1)
@@ -263,12 +265,14 @@ def decode(loc, priors, variances):
         decoded bounding box predictions
     """
 
-    boxes = torch.cat((
-        priors[:, :2] + loc[:, :2] * variances[0] * priors[:, 2:],
-        priors[:, 2:] * torch.exp(loc[:, 2:] * variances[1])), 1)
-    boxes[:, :2] -= boxes[:, 2:] / 2
-    boxes[:, 2:] += boxes[:, :2]
-    return boxes
+    return variances[1] * (loc + eight_coords_form(priors))
+
+    # boxes = torch.cat((
+    #     priors[:, :2] + loc[:, :2] * variances[0] * priors[:, 2:],
+    #     priors[:, 2:] * torch.exp(loc[:, 2:] * variances[1])), 1)
+    # boxes[:, :2] -= boxes[:, 2:] / 2
+    # boxes[:, 2:] += boxes[:, :2]
+    # return boxes
 
 
 def log_sum_exp(x):
@@ -289,7 +293,7 @@ def nms(boxes, scores, overlap=0.5, top_k=200):
     """Apply non-maximum suppression at test time to avoid detecting too many
     overlapping bounding boxes for a given object.
     Args:
-        boxes: (tensor) The location preds for the img, Shape: [num_priors,4].
+        boxes: (tensor) The location preds for the img, Shape: [num_priors,8].
         scores: (tensor) The class predscores for the img, Shape:[num_priors].
         overlap: (float) The overlap thresh for suppressing unnecessary boxes.
         top_k: (int) The Maximum number of box preds to consider.
@@ -302,8 +306,8 @@ def nms(boxes, scores, overlap=0.5, top_k=200):
         return keep
     x1 = boxes[:, 0]
     y1 = boxes[:, 1]
-    x2 = boxes[:, 2]
-    y2 = boxes[:, 3]
+    x2 = boxes[:, 4]
+    y2 = boxes[:, 5]
     area = torch.mul(x2 - x1, y2 - y1)
     v, idx = scores.sort(0)  # sort in ascending order
     # I = I[v >= 0.01]

@@ -14,6 +14,7 @@ import torch.nn.init as init
 import torch.utils.data as data
 import numpy as np
 import argparse
+import math
 
 
 def str2bool(v):
@@ -176,10 +177,13 @@ def train():
 
         # load train data
         try:
+            # images, targets, img_ids = next(batch_iterator)
             images, targets = next(batch_iterator)
         except StopIteration:
             batch_iterator = iter(data_loader)
             images, targets = next(batch_iterator)
+
+        # print("-1: before loss function, targets is: {}".format(targets))
 
         if args.cuda:
             images = Variable(images.cuda())
@@ -189,10 +193,14 @@ def train():
             with torch.no_grad():
                 targets = [Variable(ann) for ann in targets]
         # forward
+        # for img_id, target in zip(img_ids, targets):
+        #     print("img_id: {}, target: {}".format(img_id, target))
+
         t0 = time.time()
         out = net(images)
         # backprop
         optimizer.zero_grad()
+        # print("before loss function, targets is: {}".format(targets))
         loss_l, loss_c = criterion(out, targets)
         loss = loss_l + loss_c
         loss.backward()
@@ -201,9 +209,13 @@ def train():
         loc_loss += loss_l.item()
         conf_loss += loss_c.item()
 
-        if iteration % 10 == 0:
+        if iteration >= 0:
             print('timer: %.4f sec.' % (t1 - t0))
-            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.item()), end=' ')
+            print('iter ' + repr(iteration) + ' || Loss: %.4f || loss_l: %.4f || loss_c: %.4f' % (loss.item(), loss_l.item(), loss_c.item()), end=' ')
+
+        if math.isnan(loss_l.item()):
+            print("nan loss, now exit.")
+            exit()
 
         if args.visdom:
             update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
@@ -211,7 +223,7 @@ def train():
 
         if iteration != 0 and iteration % 200 == 0:
             print('Saving state, iter:', iteration)
-            torch.save(ssd_net.state_dict(), 'weights/ssd300_COCO_' +
+            torch.save(ssd_net.state_dict(), 'weights/ssd300_SSN406_' +
                        repr(iteration) + '.pth')
     torch.save(ssd_net.state_dict(),
                args.save_folder + '' + args.dataset + '.pth')

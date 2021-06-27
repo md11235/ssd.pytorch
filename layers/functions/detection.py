@@ -33,14 +33,19 @@ class Detect(Function):
         """
         num = loc_data.size(0)  # batch size
         num_priors = prior_data.size(0)
-        output = torch.zeros(num, self.num_classes, self.top_k, 5)
+        output = torch.zeros(num, self.num_classes, self.top_k, 9)
         conf_preds = conf_data.view(num, num_priors,
                                     self.num_classes).transpose(2, 1)
 
         # Decode predictions into bboxes.
         for i in range(num):
+            print("loc_data[{}]: {}".format(i, loc_data[i]))
+            print("loc_data shape: {}".format(loc_data[i].shape))
+            print(prior_data)
             decoded_boxes = decode(loc_data[i], prior_data, self.variance)
+            print("decoded boxes shape: {}".format(decoded_boxes.shape))
             # For each class, perform nms
+            print("conf scores shape: {}".format(conf_preds[i].shape))
             conf_scores = conf_preds[i].clone()
 
             for cl in range(1, self.num_classes):
@@ -49,13 +54,13 @@ class Detect(Function):
                 if scores.size(0) == 0:
                     continue
                 l_mask = c_mask.unsqueeze(1).expand_as(decoded_boxes)
-                boxes = decoded_boxes[l_mask].view(-1, 4)
+                boxes = decoded_boxes[l_mask].view(-1, 8)
                 # idx of highest scoring and non-overlapping boxes per class
                 ids, count = nms(boxes, scores, self.nms_thresh, self.top_k)
                 output[i, cl, :count] = \
                     torch.cat((scores[ids[:count]].unsqueeze(1),
                                boxes[ids[:count]]), 1)
-        flt = output.contiguous().view(num, -1, 5)
+        flt = output.contiguous().view(num, -1, 9)
         _, idx = flt[:, :, 0].sort(1, descending=True)
         _, rank = idx.sort(1)
         flt[(rank < self.top_k).unsqueeze(-1).expand_as(flt)].fill_(0)

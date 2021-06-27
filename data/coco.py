@@ -14,6 +14,7 @@ IMAGES = 'images'
 ANNOTATIONS = 'annotations'
 COCO_API = 'PythonAPI'
 INSTANCES_SET = 'instances_{}.json'
+COCO_SSN406_CLASSES = ('panel',)
 COCO_CLASSES = ('person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
                 'train', 'truck', 'boat', 'traffic light', 'fire', 'hydrant',
                 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog',
@@ -61,13 +62,20 @@ class COCOQuadrilateralAnnotationTransform(object):
         for obj in target:
             if 'bbox' in obj:
                 bbox = obj['bbox']
+                print("old bbox: {}".format(bbox))
                 bbox = reduce(lambda x, y: x+y, bbox)
+                print("new bbox: {}".format(bbox))
                 if np.array(bbox).shape[0] == 10:
                     print(target)
                 # print("bbox: {}".format(bbox))
                 label_idx = self.label_map[obj['category_id']] - 1
+                # print("scale: {}".format(scale))
+                print((np.array(bbox)).shape)                
+                print((np.array(bbox)/scale).shape)
                 final_box = list(np.array(bbox)/scale)
+                print(len(final_box))
                 final_box.append(label_idx)
+                print("final box: {}".format(final_box))
                 res += [final_box]  # [xmin, ymin, xmax, ymax, label_idx]
             else:
                 print("no bbox problem!")
@@ -120,13 +128,14 @@ class COCODetection(data.Dataset):
         in the target (bbox) and transforms it.
     """
 
-    def __init__(self, root, image_set='trainval35k', transform=None,
+    def __init__(self, root, image_set='train2014', transform=None,
                  target_transform=COCOQuadrilateralAnnotationTransform(), dataset_name='MS COCO'):
         sys.path.append(osp.join(root, COCO_API))
         from pycocotools.coco import COCO
         self.root = osp.join(root, IMAGES, image_set)
-        self.coco = COCO(osp.join(root, ANNOTATIONS,
-                                  INSTANCES_SET.format(image_set)))
+        tmp_anno_path = osp.join(root, ANNOTATIONS, INSTANCES_SET.format(image_set))
+        self.coco = COCO(tmp_anno_path)
+        print("loading COCO from {} and {}".format(self.root, tmp_anno_path))
         self.ids = list(self.coco.imgToAnns.keys())
         self.transform = transform
         self.target_transform = target_transform
@@ -141,6 +150,7 @@ class COCODetection(data.Dataset):
                    target is the object returned by ``coco.loadAnns``.
         """
         im, gt, h, w = self.pull_item(index)
+        print("COCODetection truth: {}".format(gt))
         return im, gt
 
     def __len__(self):
@@ -161,21 +171,28 @@ class COCODetection(data.Dataset):
         target = self.coco.loadAnns(ann_ids)
         # print("loadAnns target: {}".format(target))
         path = osp.join(self.root, self.coco.loadImgs(img_id)[0]['file_name'])
+        print("reading image id: {} at {}".format(img_id, path))
         assert osp.exists(path), 'Image path does not exist: {}'.format(path)
         img = cv2.imread(osp.join(self.root, path))
         height, width, _ = img.shape
+        print("target before trans1: {}".format(target))
         if self.target_transform is not None:
-            # print("before target trans {}".format(target))
+            print("before target trans {}".format(target))
             target = self.target_transform(target, width, height)
-            # print("after target trans {}".format(target))
+            print("after target trans {}".format(target))
         if self.transform is not None:
             target = np.array(target)
-            img, boxes, labels = self.transform(img, target[:, :8],
-                                                target[:, 8])
+            img, boxes, labels = self.transform(img, target[:, :8], target[:, 8])
+            # boxes = target[:, :8]
+            # labels = target[:, 8]
+
             # to rgb
             img = img[:, :, (2, 1, 0)]
 
+            print("before AUG trans {}".format(target))
             target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
+            print("after AUG trans {}".format(target))
+        print("pull_item truth: {}".format(target))
         return torch.from_numpy(img).permute(2, 0, 1), target, height, width
 
     def pull_image(self, index):

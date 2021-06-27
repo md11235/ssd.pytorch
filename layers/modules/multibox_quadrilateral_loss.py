@@ -52,27 +52,34 @@ class MultiBoxQuadrilaterralLoss(nn.Module):
             and prior boxes from SSD net.
                 conf shape: torch.size(batch_size,num_priors,num_classes)
                 loc shape: torch.size(batch_size,num_priors,8)
-                priors shape: torch.size(num_priors,8)
+                priors shape: torch.size(num_priors, 4)
 
             targets (tensor): Ground truth boxes and labels for a batch,
-                shape: [batch_size,num_objs,5] (last idx is the label).
+                shape: [batch_size,num_objs, 9] (last idx is the label).
         """
         loc_data, conf_data, priors = predictions
-        num = loc_data.size(0)
+        num = loc_data.size(0) # batch size
         priors = priors[:loc_data.size(1), :]
         num_priors = (priors.size(0))
         num_classes = self.num_classes
 
         # match priors (default boxes) and ground truth boxes
+        # num is batch size
         loc_t = torch.Tensor(num, num_priors, 8)
         conf_t = torch.LongTensor(num, num_priors)
-        for idx in range(num):
+        # print("in loss function, target is {}".format(targets))
+        for idx in range(num): # for each image
             # print("targets: {}, {}".format(idx, targets[idx]))
             truths = targets[idx][:, :-1].data
             # print("truths shape: {}".format(truths.shape))
             # print("truths: {}".format(truths))
             labels = targets[idx][:, -1].data
             defaults = priors.data
+            # print("id {}, truths shape: {}, value: {}, default shape {}, value: {}".format(idx, truths.shape, truths, defaults.shape, defaults))
+            if truths[0][0] > truths[0][2]:
+                print("compare: {} ??>?? {}".format(truths[0][0], truths[0][2]))
+                print("truths: {}".format(truths))
+                exit()
             match_quadrilaterals(self.threshold, truths, defaults, self.variance, labels,
                                  loc_t, conf_t, idx)
         if self.use_gpu:
@@ -88,8 +95,10 @@ class MultiBoxQuadrilaterralLoss(nn.Module):
         # Localization Loss (Smooth L1)
         # Shape: [batch,num_priors,8]
         pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
+        print("raw loc_p shape: {}, raw loc_t shape: {}".format(loc_data.shape, loc_t.shape))
         loc_p = loc_data[pos_idx].view(-1, 8)
         loc_t = loc_t[pos_idx].view(-1, 8)
+        print("loc_p shape: {}, value: {}, loc_t shape: {}, value: {}".format(loc_p.shape, loc_p, loc_t.shape, loc_t))
         loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
 
         # Compute max conf across batch for hard negative mining
@@ -116,6 +125,7 @@ class MultiBoxQuadrilaterralLoss(nn.Module):
         # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N
 
         N = num_pos.data.sum()
+        print("number of positives:{}".format(N))
         loss_l /= N
         loss_c /= N
         return loss_l, loss_c
