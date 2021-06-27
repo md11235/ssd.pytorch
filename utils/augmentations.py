@@ -357,7 +357,8 @@ class RandomMirror(object):
         if random.randint(2):
             image = image[:, ::-1]
             boxes = boxes.copy()
-            boxes[:, 0::2] = width - boxes[:, 6::-2]
+            boxes[:, 0:3:2] = width - boxes[:, 2::-2]
+            boxes[:, 4:7:2] = width - boxes[:, 6:3:-2]
         return image, boxes, classes
 
 
