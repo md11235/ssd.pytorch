@@ -95,10 +95,10 @@ class MultiBoxQuadrilaterralLoss(nn.Module):
         # Localization Loss (Smooth L1)
         # Shape: [batch,num_priors,8]
         pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
-        print("raw loc_p shape: {}, raw loc_t shape: {}".format(loc_data.shape, loc_t.shape))
+        # print("raw loc_p shape: {}, raw loc_t shape: {}".format(loc_data.shape, loc_t.shape))
         loc_p = loc_data[pos_idx].view(-1, 8)
         loc_t = loc_t[pos_idx].view(-1, 8)
-        print("loc_p shape: {}, value: {}, loc_t shape: {}, value: {}".format(loc_p.shape, loc_p, loc_t.shape, loc_t))
+        # print("loc_p shape: {}, value: {}, loc_t shape: {}, value: {}".format(loc_p.shape, loc_p, loc_t.shape, loc_t))
         loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
 
         # Compute max conf across batch for hard negative mining
@@ -125,7 +125,7 @@ class MultiBoxQuadrilaterralLoss(nn.Module):
         # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N
 
         N = num_pos.data.sum()
-        print("number of positives:{}".format(N))
+        # print("number of positives:{}".format(N))
         loss_l /= N
         loss_c /= N
         return loss_l, loss_c

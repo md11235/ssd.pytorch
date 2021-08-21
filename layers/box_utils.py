@@ -157,7 +157,8 @@ def match_quadrilaterals(threshold, truths, priors, variances, labels, loc_t, co
     matches = truths[best_truth_idx]          # Shape: [num_priors,4]
     conf = labels[best_truth_idx] + 1         # Shape: [num_priors]
     conf[best_truth_overlap < threshold] = 0  # label as background
-    loc = encode_quadrilaterals(matches, priors, variances)
+    pos = torch.where(conf>0)
+    loc = encode_quadrilaterals(matches, priors, pos, variances)
     loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn
     conf_t[idx] = conf  # [num_priors] top class label for each prior
 
@@ -206,8 +207,56 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn
     conf_t[idx] = conf  # [num_priors] top class label for each prior
 
+    
+def define_orient(matched, horizontal_rectangle):
+    '''
+    确定多边形四个角的顺序，采用欧几里得距离，求最小的排列
+    :param matched: [num_priors, 8], point-form
+    :param horizontal_rectangle: [num_priors, 8], point-form
+    :return:
+    '''
+    # 1234-2341-3412-4123
+    distance_min_1 = torch.sum((matched[:, 0:2] - horizontal_rectangle[:, 0:2]) ** 2, dim=1) + \
+                   torch.sum((matched[:, 2:4] - horizontal_rectangle[:, 2:4]) ** 2, dim=1) + \
+                   torch.sum((matched[:, 4:6] - horizontal_rectangle[:, 4:6]) ** 2, dim=1) + \
+                   torch.sum((matched[:, 6:8] - horizontal_rectangle[:, 6:8]) ** 2, dim=1) # (num_priors)
 
-def encode_quadrilaterals(matched, priors, variances):
+    distance_min_2 = torch.sum((matched[:, 2:4] - horizontal_rectangle[:, 0:2]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 4:6] - horizontal_rectangle[:, 2:4]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 6:8] - horizontal_rectangle[:, 4:6]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 0:2] - horizontal_rectangle[:, 6:8]) ** 2, dim=1)  # (num_priors)
+
+    distance_min_3 = torch.sum((matched[:, 4:6] - horizontal_rectangle[:, 0:2]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 6:8] - horizontal_rectangle[:, 2:4]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 0:2] - horizontal_rectangle[:, 4:6]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 2:4] - horizontal_rectangle[:, 6:8]) ** 2, dim=1)  # (num_priors)
+
+    distance_min_4 = torch.sum((matched[:, 6:8] - horizontal_rectangle[:, 0:2]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 0:2] - horizontal_rectangle[:, 2:4]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 2:4] - horizontal_rectangle[:, 4:6]) ** 2, dim=1) + \
+                     torch.sum((matched[:, 4:6] - horizontal_rectangle[:, 6:8]) ** 2, dim=1)  # (num_priors)
+
+    origin = torch.cat((distance_min_1.unsqueeze(1),
+                        distance_min_2.unsqueeze(1),
+                        distance_min_3.unsqueeze(1),
+                        distance_min_4.unsqueeze(1)), 1) # (num_priors, 4)
+
+    origin_indices = origin.min(dim=1).indices  # (num_priors)
+    for i, box in enumerate(matched):
+        if origin_indices[i] == 1:
+            index = [2, 3, 4, 5, 6, 7, 0, 1]
+            matched[i] = matched[i][index]
+        if origin_indices[i] == 2:
+            index = [4, 5, 6, 7, 0, 1, 2, 3]
+            matched[i] = matched[i][index]
+        if origin_indices[i] == 3:
+            index = [6, 7, 0, 1, 2, 3, 4, 5]
+            matched[i] = matched[i][index]
+
+    return matched
+
+
+def encode_quadrilaterals(matched, priors, pos, variances):
     """
 
     Args:
@@ -221,7 +270,15 @@ def encode_quadrilaterals(matched, priors, variances):
 
     """
     # todo: 查看matched 和 priors的值是多少（绝对坐标值还是相对w、h的值）
+    x0 = matched[:, 0:7:2].min(-1, keepdim=True).values
+    y0 = matched[:, 1:8:2].min(-1, keepdim=True).values
+    x1 = matched[:, 0:7:2].max(-1, keepdim=True).values
+    y1 = matched[:, 1:8:2].max(-1, keepdim=True).values
+    horizontal_rectangle = torch.cat((x0, y0, x1, y0, x1, y1, x0, y1), 1)
+    matched[pos] = define_orient(matched[pos], horizontal_rectangle[pos])
+
     priors_8coords = eight_coords_form(priors)
+    
     diff = matched - priors_8coords
     diff /= torch.cat((priors[:, 2:], priors[:, 2:], priors[:, 2:], priors[:, 2:]), dim=1)
 
